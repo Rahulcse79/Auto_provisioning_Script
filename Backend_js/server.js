@@ -7,6 +7,9 @@ const fs = require("fs");
 const path = require("path");
 const cors = require("cors");
 const os = require("os");
+const osUtils = require('os-utils');
+const diskusage = require('diskusage');
+
 
 const nets = networkInterfaces();
 let IpAddress = "localhost";
@@ -15,6 +18,105 @@ const server = new JSONRPCServer();
 app.use(bodyParser.json());
 app.use(cors());
 const DHCP_CONFIG_FILE = "/etc/dhcp/dhcpd.conf";
+
+function formatBytes(bytes, decimals = 2) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+function getRamUsage() {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const memUsage = osUtils.freememPercentage();
+  return {
+    totalMem: formatBytes(totalMem),
+    freeMem: formatBytes(freeMem),
+    usedMem: formatBytes(usedMem),
+    memUsage: `${(1 - memUsage) * 100}%`
+  };
+}
+
+function getCpuUsage() {
+  return new Promise((resolve, reject) => {
+    osUtils.cpuUsage(function(v){
+      resolve(`${v.toFixed(2)}%`);
+    });
+  });
+}
+
+function getTotalCpu() {
+  return new Promise((resolve, reject) => {
+    const cpus = os.cpus();
+    const totalCpuUsage = cpus.reduce((total, cpu) => {
+      const times = cpu.times;
+      total.user += times.user;
+      total.nice += times.nice;
+      total.sys += times.sys;
+      total.idle += times.idle;
+      total.irq += times.irq;
+      return total;
+    }, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 });
+    const totalCpuPercent = 100 - ((totalCpuUsage.idle / (totalCpuUsage.user + totalCpuUsage.nice + totalCpuUsage.sys + totalCpuUsage.idle + totalCpuUsage.irq)) * 100);
+    
+    resolve(`${totalCpuPercent.toFixed(2)}%`);
+  });
+}
+
+function getDiskUsage() {
+  return new Promise((resolve, reject) => {
+    diskusage.check('/', function(err, info) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve({
+          totalDisk: formatBytes(info.total),
+          freeDisk: formatBytes(info.available),
+          usedDisk: formatBytes(info.total - info.available),
+          diskUsage: `${((info.total - info.available) / info.total) * 100}%`
+        });
+      }
+    });
+  });
+}
+
+async function getSystemHealth() {
+  try {
+    const ramUsage = getRamUsage(); 
+    const cpuUsage = await getCpuUsage(); 
+    const diskUsage = await getDiskUsage(); 
+    const totalCpu = await getTotalCpu();
+
+    const data = { ramUsage, cpuUsage,totalCpu, diskUsage };
+    return data;
+
+  } catch (error) {
+    console.error('Error fetching system metrics:', error);
+    throw error; 
+  }
+}
+
+app.get("/systemHealth", async (req, res) => {
+  try {
+    const data = await getSystemHealth();
+    if (data) {
+      res.json({
+        status: 0,
+        message: "System health data retrieved successfully",
+        data: data
+      });
+    } else {
+      res.status(500).json({ error: "Failed to retrieve system health data" });
+    }
+  } catch (error) {
+    console.error("Error retrieving system health data:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 server.addMethod("reboot", () => {
   return new Promise((resolve, reject) => {
@@ -166,7 +268,7 @@ for (const name of Object.keys(nets)) {
   }
 }
 
-const port = 3021;
+const port = 4050;
 app.listen(port, IpAddress, () => {
   console.log(`RPC Server is running on http://${IpAddress}:${port}/rpc`);
 });
