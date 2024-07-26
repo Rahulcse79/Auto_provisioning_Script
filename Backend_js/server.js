@@ -62,6 +62,7 @@ function getCpuUsage() {
 function getTotalCpu() {
   return new Promise((resolve, reject) => {
     // Retrieve CPU information
+    const os = require('os');
     const cpus = os.cpus();
 
     // Store previous CPU times for calculating deltas
