@@ -40,32 +40,69 @@ function getRamUsage() {
     memUsage: `${(1 - memUsage) * 100}%`
   };
 }
-
 function getCpuUsage() {
   return new Promise((resolve, reject) => {
-    osUtils.cpuUsage(function(v){
-      resolve(`${v.toFixed(2)}%`);
-    });
+    const cpuCount = os.cpus().length;
+    let totalUsage = 0;
+
+    // Calculate total CPU usage across all cores
+    for (const cpu of os.cpus()) {
+      const usage = 1 - (cpu.times.idle / (cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq));
+      totalUsage += usage;
+    }
+
+    // Calculate average CPU usage
+    const averageUsage = totalUsage / cpuCount;
+    const cpuUsagePercent = (averageUsage * 100).toFixed(2);
+
+    resolve(`${cpuUsagePercent}%`);
   });
 }
 
 function getTotalCpu() {
   return new Promise((resolve, reject) => {
+    // Retrieve CPU information
     const cpus = os.cpus();
-    const totalCpuUsage = cpus.reduce((total, cpu) => {
-      const times = cpu.times;
-      total.user += times.user;
-      total.nice += times.nice;
-      total.sys += times.sys;
-      total.idle += times.idle;
-      total.irq += times.irq;
-      return total;
-    }, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 });
-    const totalCpuPercent = 100 - ((totalCpuUsage.idle / (totalCpuUsage.user + totalCpuUsage.nice + totalCpuUsage.sys + totalCpuUsage.idle + totalCpuUsage.irq)) * 100);
-    
-    resolve(`${totalCpuPercent.toFixed(2)}%`);
+
+    // Store previous CPU times for calculating deltas
+    let prevCpuTimes = [];
+    for (let cpu of cpus) {
+      prevCpuTimes.push({ idle: cpu.times.idle, total: cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq });
+    }
+
+    // Wait for a short interval (e.g., 1 second) to get delta values
+    setTimeout(() => {
+      // Retrieve CPU information again after interval
+      const cpus = os.cpus();
+      let totalCpuPercent = 0;
+
+      // Calculate total CPU usage percentage
+      for (let i = 0; i < cpus.length; i++) {
+        const cpu = cpus[i];
+        const prevCpu = prevCpuTimes[i];
+        
+        // Calculate deltas
+        const idleDiff = cpu.times.idle - prevCpu.idle;
+        const totalDiff = (cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq) - prevCpu.total;
+        
+        // Calculate CPU usage percentage
+        const cpuUsage = 100 - ((idleDiff / totalDiff) * 100);
+        
+        // Accumulate total CPU usage percentage
+        totalCpuPercent += cpuUsage;
+        
+        // Update previous CPU times for next iteration
+        prevCpuTimes[i] = { idle: cpu.times.idle, total: cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq };
+      }
+
+      // Calculate average CPU usage percentage
+      totalCpuPercent = totalCpuPercent / cpus.length;
+
+      resolve(`${totalCpuPercent.toFixed(2)}%`);
+    }, 1000); // Adjust interval as needed (e.g., 1000 ms = 1 second)
   });
 }
+
 
 function getDiskUsage() {
   return new Promise((resolve, reject) => {
@@ -206,11 +243,7 @@ const updateDHCPConfig = async (dhcpConfig) => {
     netmask = "";
     console.log(`Current Subnet: ${subnet}`);
     console.log(`Current Netmask: ${netmask}`);
-    
     let subnetConfigRegex = new RegExp(`subnet ${subnet} netmask ${netmask}\\s*{([^}]*)}`, 'gm');
-    
-    
-    
     fs.writeFileSync(DHCP_CONFIG_FILE, updatedConfig, "utf8");
     await restartDHCPService();
     console.log("DHCP configuration file updated successfully.");
