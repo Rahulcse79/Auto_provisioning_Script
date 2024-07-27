@@ -9,7 +9,8 @@ const cors = require("cors");
 const os = require("os");
 const osUtils = require('os-utils');
 const diskusage = require('diskusage');
-
+const util = require('util');
+const exec1 = util.promisify(require('child_process').exec);
 
 const nets = networkInterfaces();
 let IpAddress = "localhost";
@@ -44,14 +45,10 @@ function getCpuUsage() {
   return new Promise((resolve, reject) => {
     const cpuCount = os.cpus().length;
     let totalUsage = 0;
-
-    // Calculate total CPU usage across all cores
     for (const cpu of os.cpus()) {
       const usage = 1 - (cpu.times.idle / (cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq));
       totalUsage += usage;
     }
-
-    // Calculate average CPU usage
     const averageUsage = totalUsage / cpuCount;
     const cpuUsagePercent = (averageUsage * 100).toFixed(2);
 
@@ -61,49 +58,29 @@ function getCpuUsage() {
 
 function getTotalCpu() {
   return new Promise((resolve, reject) => {
-    // Retrieve CPU information
     const os = require('os');
     const cpus = os.cpus();
-
-    // Store previous CPU times for calculating deltas
     let prevCpuTimes = [];
     for (let cpu of cpus) {
       prevCpuTimes.push({ idle: cpu.times.idle, total: cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq });
     }
-
-    // Wait for a short interval (e.g., 1 second) to get delta values
     setTimeout(() => {
-      // Retrieve CPU information again after interval
       const cpus = os.cpus();
       let totalCpuPercent = 0;
-
-      // Calculate total CPU usage percentage
       for (let i = 0; i < cpus.length; i++) {
         const cpu = cpus[i];
         const prevCpu = prevCpuTimes[i];
-        
-        // Calculate deltas
         const idleDiff = cpu.times.idle - prevCpu.idle;
         const totalDiff = (cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq) - prevCpu.total;
-        
-        // Calculate CPU usage percentage
         const cpuUsage = 100 - ((idleDiff / totalDiff) * 100);
-        
-        // Accumulate total CPU usage percentage
         totalCpuPercent += cpuUsage;
-        
-        // Update previous CPU times for next iteration
         prevCpuTimes[i] = { idle: cpu.times.idle, total: cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq };
       }
-
-      // Calculate average CPU usage percentage
       totalCpuPercent = totalCpuPercent / cpus.length;
-
       resolve(`${totalCpuPercent.toFixed(2)}%`);
-    }, 1000); // Adjust interval as needed (e.g., 1000 ms = 1 second)
+    }, 1000);
   });
 }
-
 
 function getDiskUsage() {
   return new Promise((resolve, reject) => {
@@ -128,10 +105,8 @@ async function getSystemHealth() {
     const cpuUsage = await getCpuUsage(); 
     const diskUsage = await getDiskUsage(); 
     const totalCpu = await getTotalCpu();
-
     const data = { ramUsage, cpuUsage,totalCpu, diskUsage };
     return data;
-
   } catch (error) {
     console.error('Error fetching system metrics:', error);
     throw error; 
@@ -172,7 +147,6 @@ server.addMethod("reboot", () => {
 
 app.post("/rpc", (req, res) => {
   const jsonRPCRequest = req.body;
-
   server
     .receive(jsonRPCRequest)
     .then((jsonRPCResponse) => {
@@ -190,10 +164,7 @@ app.post("/submitDHCPConfig", (req, res) => {
       return res.status(400).json({ error: "DHCP configuration data missing" });
     }
     console.log("Received DHCP configuration:", dhcpConfig);
-
-    // Update DHCP configuration file
     const success = updateDHCPConfig(dhcpConfig);
-
     if (success) {
       res.json({
         status: 0,
@@ -208,6 +179,67 @@ app.post("/submitDHCPConfig", (req, res) => {
   }
 });
 
+async function runCommands() {
+  try {
+    const changeDirCommand = 'cd && ls';
+    const { stdout: cdOutput, stderr: cdError } = await exec1(changeDirCommand);
+    if (cdError) {
+      console.error('Error changing directory:', cdError);
+      return -1;
+    }
+    console.log('Directory contents:', cdOutput);
+    const ansibleCommand = 'cd && ansible-playbook copy.yaml';
+    const { stdout: ansibleOutput, stderr: ansibleError } = await exec1(ansibleCommand);
+
+    if (ansibleError) {
+      console.error('Error running Ansible playbook:', ansibleError);
+      return -1;
+    }
+    console.log('Ansible playbook output:', ansibleOutput);
+
+    return 1;
+
+  } catch (error) {
+    console.error('Error:', error);
+    return 0;
+  }
+}
+
+// Configure linux machine throw ansible.
+app.post("/linuxConfig", async (req, res) => {
+  try {
+    const devices = req.body;
+    if (!devices) {
+      return res.status(400).json({ error: "Ip-address missing" });
+    }
+    const success = await runCommands()
+    .then(result => {
+      if (result === 1) {
+        console.log('Commands executed successfully.');
+        return result;
+      } else {
+        console.log('Command execution failed.');
+        return result;
+      }
+    })
+    .catch(err => {
+      console.error('Error in executing commands:', err);
+      return result;
+    });
+    if (success == 1) {
+      res.json({
+          status: 0,
+          message: 'Linux configuration updated successfully'
+      });
+  } else {
+      res.status(500).json({ status: -1,error: 'Failed to update Linux configuration' });
+  }
+} catch (error) {
+  console.error('Error processing Linux configuration:', error);
+  res.status(500).json({ error: 'Internal server error' });
+}
+});
+
 const getCurrentData = async () => {
   try {
     const interfaces = os.networkInterfaces();
@@ -217,7 +249,6 @@ const getCurrentData = async () => {
       const ipv4Address = iface.find(
         (addr) => !addr.internal && addr.family === "IPv4"
       );
-
       if (ipv4Address) {
         subnet = ipv4Address.address;
         netmask = ipv4Address.netmask;
