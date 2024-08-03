@@ -10,15 +10,18 @@ const os = require("os");
 const osUtils = require('os-utils');
 const diskusage = require('diskusage');
 const util = require('util');
+require("dotenv").config();
 const exec1 = util.promisify(require('child_process').exec);
 
 const nets = networkInterfaces();
-let IpAddress = "localhost";
+let IpAddress = process.env.IpAddress || "localhost";
 const app = express();
 const server = new JSONRPCServer();
 app.use(bodyParser.json());
 app.use(cors());
-const DHCP_CONFIG_FILE = "/etc/dhcp/dhcpd.conf";
+
+const port = process.env.PORT || 4050;
+const DHCP_CONFIG_FILE = process.env.DHCPConfigFilePath || "/etc/dhcp/dhcpd.conf";
 
 function formatBytes(bytes, decimals = 2) {
   if (bytes === 0) return '0 Bytes';
@@ -333,7 +336,6 @@ for (const name of Object.keys(nets)) {
   }
 }
 
-const port = 4050;
 app.listen(port, IpAddress, () => {
   console.log(`RPC Server is running on http://${IpAddress}:${port}/rpc`);
 });

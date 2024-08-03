@@ -5,6 +5,7 @@ const { exec } = require("child_process");
 const fs = require("fs");
 const util = require("util");
 const execAsync = util.promisify(exec);
+require("dotenv").config();
 let fetch;
 
 (async () => {
@@ -14,50 +15,33 @@ let fetch;
 
     const app = express();
     app.use(cors());
-    const PORT = 5090;
+    const PORT = process.env.PORT || 5090;
+    const IpAddress = process.env.IpAddress || "localhost";
     app.use(express.json());
 
-    const SecretKey = "rahulsingh";
+    const secretKey = process.env.SecretKey || "coral";
     const sourcePath = "/var/www/html/configs/cfg4cdc0d00a350.xml";
-    const destinationPath = "/opt/Backend_js";
+    const destinationPath = process.env.SendFilePath || "/opt/Backend_js";
     const destinationUser = "coral";
 
     const verifyToken = (req, res, next) => {
-      let token = req.header("Authorization");
-
-      if (!token) {
+      const tokenHeader = req.header("Authorization");
+      if (!tokenHeader) {
         return res
           .status(401)
           .json({ message: "Access denied, No token provided." });
       }
-
-      if (token.startsWith("Bearer ")) {
-        token = token.slice(7);
+      if (!tokenHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "Invalid token format" });
       }
-
-      console.log(token);
-      jwt.verify(
-        token,
-        SecretKey,
-        { algorithms: ["HS512"] },
-        (err, decoded) => {
-          if (err) {
-            console.error("JWT verification error:", err.message);
-            return res
-              .status(401)
-              .json({ message: "Token verification failed." });
-          }
-          console.log("Decoded JWT payload:", decoded);
-          console.log("Username:", decoded.username);
-          console.log("Auth Method:", decoded.authMethod);
-          console.log("Issued At:", new Date(decoded.iat * 1000));
-          s;
-          console.log("Expires At:", new Date(decoded.exp * 1000));
-
-          req.decodedToken = decoded;
-          next();
+      const token = tokenHeader.substring(7);
+      jwt.verify(token, secretKey, (err, decoded) => {
+        if (err) {
+          return res.status(401).json({ message: "Invalid token" });
         }
-      );
+        req.user = decoded;
+        next();
+      });
     };
 
     async function sendFileToDevice(
@@ -115,7 +99,7 @@ let fetch;
       }
     }
 
-    app.post("/api/devicemanager/linux/reboot", async (req, resp) => {
+    app.post("/api/devicemanager/linux/reboot",verifyToken, async (req, resp) => {
       console.log("token verified...");
       try {
         const { devices } = req.body;
@@ -168,7 +152,7 @@ let fetch;
       }
     });
 
-    app.post("/api/devicemanager/linux/filesend", async (req, resp) => {
+    app.post("/api/devicemanager/linux/filesend",verifyToken, async (req, resp) => {
       try {
         const { devices} =
           req.body;
@@ -213,8 +197,8 @@ let fetch;
       }
     });
 
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
+    app.listen(PORT, IpAddress, () => {
+      console.log(`RPC Server is running on http://${IpAddress}:${PORT}/rpc`);
     });
   } catch (err) {
     console.error("Failed to import node-fetch:", err);
